@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS guild
 "prefix" VARCHAR,
 "roles_to_watch" BIGINT,
 "case_to_start" BIGINT,
-"default_reason" VARCHAR,
+"default_reason" VARCHAR DEFAULT 'Responsible moderator please run `log reason <case id> <reason>` to set a reason.',
 "ping_user" BOOLEAN,
-"logs_hugh" BOOLEAN,
+"logs_hush" BOOLEAN,
 "log_channel" BIGINT
 );

@@ -18,7 +18,7 @@ actinos_to_search = [
 class action_loggers():
     
     @staticmethod
-    async def role_update_log(entry,case):
+    async def role_update_log(ping,entry,case):
         
         true_or_false = False
         if entry.before.roles:
@@ -33,8 +33,8 @@ class action_loggers():
                 return
         
         if true_or_false:
-            return f"""**Sepcial Role Removed** | Case {case}\n**User**: {entry.target} ({entry.target.id})\n**Role**: {''.join([f"{x.name} ({x.id})" for x in entry.before.roles])}\n**Reason**: {entry.reason}\n**Responsible moderator**: {entry.user}"""
-        return f"""**Sepcial Role Added** | Case {case}\n**User**: {entry.target} ({entry.target.id})\n**Role**: {''.join([f"{x.name} ({x.id})" for x in entry.after.roles])}\n**Reason**: {entry.reason}\n**Responsible moderator**: {entry.user}"""    
+            return f"""**Sepcial Role Removed** | Case {case}\n**User**: {entry.target} ({entry.target.id}) {f"(<@{entry.target.id}>)" if ping else ""}\n**Role**: {''.join([f"{x.name} ({x.id})" for x in entry.before.roles])}\n**Reason**: {entry.reason}\n**Responsible moderator**: {entry.user}"""
+        return f"""**Sepcial Role Added** | Case {case}\n**User**: {entry.target} ({entry.target.id}) {f"(<@{entry.target.id}>)" if ping else ""}\n**Role**: {''.join([f"{x.name} ({x.id})" for x in entry.after.roles])}\n**Reason**: {entry.reason}\n**Responsible moderator**: {entry.user}"""    
     
     @staticmethod
     async def kick_log(entry,case):
@@ -51,7 +51,7 @@ class action_loggers():
 
         return f"""**Unban** | Case {case}\n**User**: {entry.target} ({entry.target.id})\n**Reason**: {entry.reason}\n**Responsible moderator**: {entry.user}"""
 
-class _logger(commands.Cog):
+class logger(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.last_audit_log_id = None
@@ -75,54 +75,6 @@ class _logger(commands.Cog):
                 print(err)
         
         return update
-
-
-    @commands.command(name="clear")
-    async def _messages_clear(self, ctx):
-        def me(m):
-            return m.author == self.bot.user
-
-        await ctx.channel.purge(check=me)
-        await ctx.message.add_reaction("👌")
-
-    @commands.command(name="recent")
-    async def _recent_cases(self, ctx):
-        async with self.bot.pool.acquire() as conn:
-            cases = await conn.fetch("SELECT * FROM infractions WHERE guild = $1",ctx.guild.id)
-
-            case_list = ""
-            for x in cases:
-                case_list += f"**{x['real_id']}** | Serial: {x['id']} | {x['moderator']} | {x['target']} | {x['guild']} | {x['time_punished']} | {x['reason']}\n"           
-            
-            await ctx.send(case_list)
-
-    @commands.command(name="reason")
-    async def _update_reason(self,ctx,case,*,new_reason):
-        if case.lower() in ['|','^','%','&','/','?','recent','r','~','-']:
-            case = self.bot.cases[ctx.guild.id]
-
-        async with self.bot.pool.acquire() as conn:
-            fetch_case = await conn.fetchrow("SELECT * FROM infractions WHERE real_id = $1 AND guild = $2",int(case),ctx.guild.id)
-
-            if not fetch_case:
-                return await ctx.send(":wood: not a case.")
-            
-            try:
-                await conn.execute("UPDATE infractions SET reason = $1 WHERE real_id = $2 AND guild = $3",new_reason,int(case),ctx.guild.id)
-            except Exception as err:
-                return await ctx.send(f"There was an error.\n```{err}```")
-
-            await ctx.send(":ok_hand:")
-
-    @commands.command(name="reset")
-    async def _reset_cases(self,ctx):
-        async with self.bot.pool.acquire() as conn:
-            try:
-                await conn.execute("DELETE FROM infractions WHERE guild = $1",ctx.guild.id)
-                del self.bot.cases[ctx.guild.id]
-            except Exception as err:
-                return await ctx.send(f"There was an error.\n```{err}```")
-            await ctx.send(":ok_hand:")
 
     def cog_unload(self):
         try:
@@ -151,31 +103,45 @@ class _logger(commands.Cog):
                     if entries[0].action not in actinos_to_search:
                         pass
                     else:
+                        if entries[0].reason == None:
+                            entries[0].reason = self.bot.default_reason[entries[0].user.guild.id]
+
+                        # Calling our databse to insert data:
+                        if entries[0].action == discord.AuditLogAction.member_role_update:
+                            if self.bot.roles_to_watch[entries[0].user.guild.id] != []:
+                                super_list = [x.id for x in entries[0].after.roles] + [x.id for x in entries[0].before.roles]
+                                if not any(x in super_list for x in self.bot.roles_to_watch[entries[0].user.guild.id]):
+                                    return
                         
-                        case_id = await self.new_case(entry=entries[0])
+                        try:
+                            case_id = await self.new_case(entry=entries[0])
+                            logs = entries[0].user.guild.get_channel(self.bot.log_channel[entries[0].user.guild.id])
+                        except Exception as err:
+                            print(err)
 
                         if entries[0].action == discord.AuditLogAction.member_role_update:
+
                             try:
-                                embed = await action_loggers.role_update_log(entry=entries[0],case=case_id['real_id'])
-                                await self.bot.log.send(embed)
+                                message = await action_loggers.role_update_log(entry=entries[0],case=case_id['real_id'],ping=self.bot.ping_user[entries[0].user.guild.id])
+                                await logs.send(message)
                             except Exception as err:
                                 print(err)
                         elif entries[0].action == discord.AuditLogAction.kick:
                             try:
-                                embed = await action_loggers.kick_log(entry=entries[0],case=case_id['real_id'])
-                                await self.bot.log.send(embed)        
+                                message = await action_loggers.kick_log(entry=entries[0],case=case_id['real_id'])
+                                await logs.send(message)        
                             except Exception as err:
                                 print(err)
                         elif entries[0].action == discord.AuditLogAction.ban:
                             try:
-                                embed = await action_loggers.ban_log(entry=entries[0],case=case_id['real_id'])
-                                await self.bot.log.send(embed) 
+                                message = await action_loggers.ban_log(entry=entries[0],case=case_id['real_id'])
+                                await logs.send(message) 
                             except Exception as err:
                                 print(err)
                         elif entries[0].action == discord.AuditLogAction.unban:
                             try:
-                                embed = await action_loggers.unban_log(entry=entries[0],case=case_id['real_id'])
-                                await self.bot.log.send(embed) 
+                                message = await action_loggers.unban_log(entry=entries[0],case=case_id['real_id'])
+                                await logs.send(message) 
                             except Exception as err:
                                 print(err)
 
@@ -186,4 +152,4 @@ class _logger(commands.Cog):
 
 
 def setup(bot):
-    bot.add_cog(_logger(bot))
+    bot.add_cog(logger(bot))

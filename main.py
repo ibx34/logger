@@ -19,7 +19,8 @@ class Logger(commands.Bot):
             command_prefix=self.get_pre,
             case_insensitive=True,
             reconnect=True,
-            status=discord.Status.idle,
+            allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
+            status=discord.Status.dnd,
             intents=discord.Intents(
                 messages=True,
                 guilds=True,
@@ -38,7 +39,13 @@ class Logger(commands.Bot):
         self.pool = None
         self.redis = None
         self.used = 0
+        
         self.cases = collections.defaultdict(lambda: 0)
+        self.default_reason = {}
+        self.ping_user = {}
+        self.logs_hush = {}
+        self.log_channel = {}
+        self.roles_to_watch = {}
 
     async def get_pre(self, bot, message):
 
@@ -63,12 +70,25 @@ class Logger(commands.Bot):
 
         for i in await self.pool.fetch("SELECT * FROM infractions ORDER BY real_id ASC"):
             self.cases[i["guild"]] = i["real_id"]
+        for i in await self.pool.fetch("SELECT * FROM guild"):
+            self.default_reason[i['guild']] = i['default_reason']
+            self.ping_user[i['guild']] = i['ping_user']
+            self.logs_hush[i['guild']] = i['logs_hush']
+            self.log_channel[i['guild']] = i['log_channel']
+            self.roles_to_watch[i['guild']] = i['roles_to_watch']
 
-        await self.change_presence(
-            status=discord.Status.online
-        )
+
+        await self.change_presence(status=discord.Status.idle)
+
+        print("Bot started loading schema")
+        try:
+            with open("schema.sql") as f:
+                await self.pool.execute(f.read())
+        except Exception as e:
+            print(f"Error in schema:\n{e}")
+
+
         print("Bot started loading modules")
-
         for ext in config.extensions:
             try:
                 self.load_extension(f"{ext}")
